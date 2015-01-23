@@ -1,0 +1,462 @@
+<?php
+// $Id: autonodemenu.module
+
+/**
+ * @file
+ * Code for the Auto Node Menu module.
+ */
+
+/**
+ * Implements hook_module_implements_alter().
+ */
+function autonodemenu_module_implements_alter(&$implementations, $hook){
+	if (in_array($hook,array('form_node_type_form_alter','form_alter')) && isset($implementations['autonodemenu']) && isset($implementations['menu'])) {
+		
+		$mygroup = $implementations['autonodemenu'];
+		unset($implementations['autonodemenu']);
+		
+		$new = array();
+		foreach($implementations as $module => $group){
+			$new[$module] = $group;
+			if($module == 'menu'){
+				$new['autonodemenu'] = $mygroup;
+			}
+		}
+		$implementations = $new;
+		
+	}
+}
+
+
+/**
+ * Implements hook_theme().
+ */
+function autonodemenu_theme(){
+	return array(
+		'autonodemenu_form_list' => array(
+			'render element' => 'form',
+		),
+	);
+}
+
+
+
+//////////////////////////////////////////////////////////////////////////////
+//////////////////////////////// Setting form ////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////
+
+
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function autonodemenu_form_node_type_form_alter(&$form, &$form_state, $form_id){
+	$type = $form['#node_type'];
+	$settings = $form_state['autonodemenu'] = isset($form_state['autonodemenu'])?$form_state['autonodemenu']:variable_get('autonodemenu_' . $type->type, array());
+	
+	$id = drupal_html_id('edit-autonodemenu');
+	
+	array_unshift($form['#submit'],'autonodemenu_form_submit');
+	
+	$form['menu']['autonodemenu'] = array(
+		'#type' => 'fieldset',
+		'#title' => t('Auto Menu'),
+		'#collapsible' => TRUE,
+		'#collapsed' => isset($form_state['autonodemenu_open'])?!$form_state['autonodemenu_open']:TRUE,
+		'#tree' => TRUE,
+		'#id' => $id,
+	);
+	
+	if(!empty($settings)){
+		$items = array();
+		foreach($settings as $delta => $setting){
+			$menu = menu_load($setting['menu']);
+			$path = array('menu_name'=>array(
+				'#menu' => $menu,
+				'#markup' => check_plain($menu['title']),
+			));
+			if(!empty($setting['mlid'])){
+				$plink = menu_link_load($setting['mlid']);
+				//kpr($plink);
+				for ($i = 0; $i < $plink['depth']; $i++) {
+					$pplink = ($i+1==$plink['depth'])?$plink:menu_link_load($plink[p.($i+1)]);
+					//kpr($pplink);
+					$path[$pplink['mlid']] = array(
+						'#link' => $pplink,
+						'#markup' => check_plain($pplink['title']),
+					);
+				}
+			}
+			$items[] = array(
+				'#setting' => $setting,
+				'#plink' => $setting,
+				'path' => $path,
+				'remove' => array(
+					'#type' => 'submit',
+					'#value' => t('Remove'),
+					'#name' => 'autonodemenu_delete_'.$delta,
+					'#remove_delta' => $delta,
+					'#submit' => array('autonodemenu_form_remove_submit'),
+					'#ajax' => array(
+						'callback' => 'autonodemenu_form_container',
+						'wrapper' => $id
+					),
+				)
+			);
+		}
+		$form['menu']['autonodemenu']['list'] = array_merge(array(
+			'#theme' => 'autonodemenu_form_list',
+		),$items);
+	}
+	$options = menu_parent_options(menu_get_menus(), array('mlid' => 0));
+	$form['menu']['autonodemenu']['menu_parent'] = array(
+		'#type' => 'select',
+		'#title' => t('Parent menu link'),
+		'#default_value' => null,
+		'#options' => $options,
+		'#description' => t('Choose the menu item for inserted links.'),
+		'#tree' => TRUE,
+	);
+	$form['menu']['autonodemenu']['add'] = array(
+		'#type' => 'submit',
+		'#value' => t('Add'),
+		'#name' => 'autonodemenu_add',
+		'#submit' => array('autonodemenu_form_add_submit'),
+		'#ajax' => array(
+			'callback' => 'autonodemenu_form_container',
+			'wrapper' => $id
+		),
+	);
+	//kpr($form);
+}
+
+function theme_autonodemenu_form_list($vars){
+	$table = array(
+		'header' => array(
+			array(
+				'data'=>t('Parent menu link'),
+			),
+			array(
+				'data'=>t('Actions'),
+			),
+		)
+	);
+	foreach(element_children($vars['form']) as $key){
+		$item = $vars['form'][$key];
+		$path = array();
+		foreach(element_children($item['path']) as $k){
+			$path[] = render($item['path'][$k]);
+		}
+		$path = array('#markup'=>implode(' &gt; ',$path));
+		$table['rows'][] = array(
+			'data' => array(
+				array(
+					'data' => array(
+						$path
+					),
+				),
+				array(
+					'data' => array(
+						$item['remove']
+					),
+				)
+			)
+		);
+	}
+	//kpr($table);
+	return theme('table__autonodemenu_form_list',$table);
+}
+
+function autonodemenu_form_container($form,&$form_state){
+	return $form['menu']['autonodemenu'];
+}
+
+function autonodemenu_form_add_submit(&$form, &$form_state){
+	//kpr($form_state);
+	//exit();
+	if(!empty($form_state['values']['autonodemenu']['menu_parent'])){
+		$setting = array_combine(array('menu','mlid'),explode(':',$form_state['values']['autonodemenu']['menu_parent']));
+		$form_state['autonodemenu'][] = $setting;
+		$form_state['rebuild'] = TRUE;
+		$form_state['autonodemenu_open'] = TRUE;
+	}
+	//$form_state['autonodemenu']
+}
+
+function autonodemenu_form_remove_submit(&$form, &$form_state){
+	//kpr($form_state);
+	//exit();
+	if(isset($form_state['triggering_element']['#remove_delta'])){
+		$delta = $form_state['triggering_element']['#remove_delta'];
+		unset($form_state['autonodemenu'][$delta]);
+		$form_state['autonodemenu_open'] = TRUE;
+		$form_state['rebuild'] = TRUE;
+	}
+}
+
+function autonodemenu_form_submit(&$form, &$form_state){
+	$type = $form['#node_type'];
+	unset($form_state['values']['autonodemenu']);
+	$old = variable_get('autonodemenu_' . $type->type, array());
+	$new = isset($form_state['autonodemenu'])?$form_state['autonodemenu']:array();
+	//kpr(array($old != $new,$old,$new));
+	//exit();
+	if($old != $new){
+		variable_set('autonodemenu_' . $type->type, $new);
+		autonodemenu_update_node_links($type->type);
+	}
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////// Links creation ////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+
+
+/**
+ * Implements hook_node_insert().
+ */
+function autonodemenu_node_insert($node) {
+	autonodemenu_update_node_links($node);
+}
+/**
+ * Implements hook_node_update().
+ */
+function autonodemenu_node_update($node) {
+	autonodemenu_update_node_links($node);
+}
+
+
+/**
+ * Implements hook_node_delete().
+ */
+function autonodemenu_node_delete($node) {
+	autonodemenu_update_node_links($node,'delete');
+}
+
+function autonodemenu_update_node_links($node,$op='update'){
+	$checkManualMenu = true;
+	$checkManualMenu = $checkManualMenu && $op != 'delete';
+	$setting = null;
+	
+	///////////////// Get nodes /////////////////
+	$nodes = array();
+	if(is_numeric($node)){
+		$node = node_load($node);
+	}
+	if(is_string($node)){
+		$query = new EntityFieldQuery();
+		$query->entityCondition('entity_type', 'node')
+			->entityCondition('bundle', $node)
+			->propertyCondition('status', 1);
+			
+		$setting = variable_get('autonodemenu_' . $node, array());
+		
+		$result = $query->execute();
+		if(!empty($result['node'])){
+			$nodes = node_load_multiple(array_keys($result['node']));
+		}
+	}elseif(!empty($node)){
+		$setting = variable_get('autonodemenu_' . $node->type, array());
+		if(function_exists('translation_node_get_translations')){
+			$translations = translation_node_get_translations($node->tnid);
+		}
+		if(empty($translations)) $translations = array(LANGUAGE_NONE=>$node);
+		foreach($translations as $translation){
+			$nodes[$translation->nid] = node_load($translation->nid);
+		}
+	}
+	if(empty($nodes) || empty($setting)){
+		return;
+	}
+	
+	///////////////// Get parent menu links /////////////////
+	$rootMenu = array();
+	$plids = array();
+	foreach ($setting as $delta => &$set) {
+		if(!empty($set['mlid'])){
+			$link = menu_link_load($set['mlid']);
+			if(function_exists('i18n_menu_translation_load') && !empty($link['i18n_tsid']) ){
+				$ts = i18n_menu_translation_load($link['i18n_tsid']);
+				$set['plinks'] = $ts->get_translations();
+			}else{
+				$set['plinks'][LANGUAGE_NONE] = $link;
+			}
+			foreach ($set['plinks'] as $l) {
+				$plids[$l['mlid']] = $delta;
+			}
+		}else{
+			$rootMenu[$set['menu']] = $delta;
+		}
+	}
+	
+	$paths = array();
+	foreach ($nodes as $node) {
+		$paths['node/'.$node->nid] = $node->nid;
+	}
+	
+	///////////////// Build existing query /////////////////
+	$query = db_select('menu_links', 'ml', array('fetch' => PDO::FETCH_ASSOC));
+	$query->fields('ml');
+	$query->condition('ml.link_path', array_keys($paths), 'IN');
+	if($checkManualMenu){
+		$cond = db_and();
+		$cond->condition('ml.module', 'menu');
+		if(!empty($rootMenu)){
+			$cond->condition(db_or()
+				->condition('ml.plid', array_keys($plids), 'IN')
+				->condition(db_and()
+					->isNull('ml.plid')
+					->condition('ml.menu_name', array_keys($rootMenu), 'IN')
+				)
+			);
+		}else{
+			$cond->condition('ml.plid', array_keys($plids), 'IN');
+		}
+		$query->condition(db_or()
+			->condition('ml.module', 'autonodemenu')
+			->condition($cond)
+		);
+	}else{
+		$query->condition('ml.module', 'autonodemenu');
+	}
+	
+	$toAdd = array();
+	$toDelete = array();
+	$toUpdate = array();
+	
+	///////////////// Map existing links /////////////////
+	$res = $query->execute();
+	foreach ($query->execute() as $link) {
+		$link['options'] = unserialize($link['options']);
+		//kpr($link);
+		if($op != 'delete'){
+			$nid = $paths[$link['link_path']];
+			$setDelta = null;
+			if(!empty($link['plid'])){
+				if(isset($plids[$link['plid']])){
+					$setDelta = $plids[$link['plid']];
+					$path = array($setDelta,'existing',$link['plid'],$nid);
+				}
+			}else{
+				if(isset($plids[$link['plid']])){
+					$setDelta = $rootMenu[$link['menu_name']];
+					$path = array($setDelta,'existing',$nid);
+				}
+			}
+			if(!is_null($setDelta)){
+				drupal_array_get_nested_value($setting, $path, $key_exists);
+				if($key_exists){
+					$toDelete[$link['mlid']] = $link;
+				}else{
+					drupal_array_set_nested_value($setting, $path, $link);
+				}
+			}else{
+				$toDelete[$link['mlid']] = $link;
+			}
+		}else{
+			$toDelete[$link['mlid']] = $link;
+		}
+	}
+	
+	///////////////// Find links to add/update /////////////////
+	if($op != 'delete'){
+		foreach ($setting as $delta => &$set) {
+			$plinks = !empty($set['plinks'])?$set['plinks']:array(LANGUAGE_NONE=>null);
+			foreach ($plinks as $lang => $plink) {
+				foreach ($nodes as $node) {
+					if( $lang == $node->language || $lang == LANGUAGE_NONE || $node->language == LANGUAGE_NONE ) {
+						if(!empty($set['existing'])){
+							if(!empty($plink)){
+								$path = array($plink['mlid'],$node->nid);
+							}else{
+								$path = array($node->nid);
+							}
+							$existing =& drupal_array_get_nested_value($set['existing'], $path, $key_exists);
+							//kpr($existing);
+						}
+						
+						$linkData = array(
+							'menu_name' => $set['menu'],
+							'plid' => !empty($plink)?$plink['mlid']:null,
+							'link_path' => 'node/'.$node->nid,
+							'router_path' => 'node/%',
+							'link_title' => $node->title,
+							'module' => 'autonodemenu',
+							'language' => $node->language,
+						);
+						if(!empty($existing)){
+							$existing['found'] = true;
+							$edited = $existing;
+							if($existing['customized']){
+								$toCheck = array('module');
+							}else{
+								$toCheck = array('link_title','module');
+							}
+							$diff = array_diff_assoc(array_intersect_key($linkData,array_flip($toCheck)),array_intersect_key($existing,array_flip($toCheck)));
+							if(!empty($diff)){
+								$edited = array_merge($existing,$diff);
+							}
+							//if(is_string($edited['options'])){
+							//	$edited['options'] = unserialize($edited['options']);
+							//}
+							drupal_alter('autonodemenu_link', $edited, $node);
+							if($edited && empty($edited['deleted']) && $edited != $existing){
+								$edited['existing'] = $existing;
+								$toUpdate[$edited['mlid']] = $edited;
+							}elseif(!$edited || !empty($edited['deleted'])){
+								$toDelete[$existing['mlid']] = $existing;
+							}
+							unset($edited);
+						}else{
+							drupal_alter('autonodemenu_link', $linkData, $node);
+							if(!empty($linkData) && empty($linkData['deleted'])){
+								$toAdd[] = $linkData;
+							}
+						}
+						unset($existing);
+					}
+				}
+			}
+			
+			if(!empty($set['existing'])){
+				$checkNotFound = array();
+				if(!empty($set['plinks'])){
+					foreach ($set['existing'] as $plid => $group) {
+						$checkNotFound = array_merge($checkNotFound,$group);
+					}
+				}else{
+					$checkNotFound = $set['existing'];
+				}
+				foreach($checkNotFound as $link){
+					if(empty($link['found'])){
+						$toDelete[$link['mlid']] = $link;
+					}
+				}
+			}
+			
+		}
+	}
+	
+	//kpr(compact('setting','nodes','rootMenu','plids','paths','toAdd','toUpdate','toDelete'));
+	//exit();
+	
+	///////////////// Execute queries /////////////////
+	foreach($toAdd as $data){
+		menu_link_save($data);
+	}
+	foreach($toUpdate as $mlid => $data){
+		$existing = $data['existing'];
+		unset($data['existing']);
+		//$existing['options'] = serialize($existing['options']);
+		//kpr($data);
+		menu_link_save($data,$existing);
+	}
+	foreach($toDelete as $mlid => $data){
+		menu_link_delete($data['mlid']);
+	}
+	
+	
+	
+	
+}

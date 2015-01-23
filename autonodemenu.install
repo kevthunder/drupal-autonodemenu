@@ -1,0 +1,26 @@
+<?php
+// $Id: content_sections.install
+
+/**
+ * @file
+ * Installation file for the content_sections module.
+ */
+
+/**
+ * Implementation of hook_install().
+ */
+function autonodemenu_install() {
+}
+
+/**
+ * Implementation of hook_uninstall().
+ */
+function autonodemenu_uninstall() {
+}
+
+/**
+ * Implementation of hook_schema_alter().
+ */
+function autonodemenu_schema_alter(&$schema) {
+}
+
